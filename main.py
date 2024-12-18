@@ -88,6 +88,74 @@ def convert_to_indices(input_filename='text8_20m.txt', output_filename='text8_in
 
     print(f'Converted text saved to {output_path}')
 
+    # Save indices for later use (adding this line as new code)
+    np.save(os.path.join(data_folder, 'text8_indices.npy'), np.array(indices))
+
+def generate_skip_gram_pairs(data_folder='data', window_size=2, index_to_word=None):
+    # Load the indices we saved previously
+    indices_path = os.path.join(data_folder, 'text8_indices.npy')
+    if not os.path.exists(indices_path):
+        raise FileNotFoundError(f"{indices_path} not found. Please run convert_to_indices first.")
+
+    indices = np.load(indices_path)
+
+    # Generate skip-gram pairs
+    skip_gram_pairs = []
+    for i in range(len(indices)):
+        center_word = indices[i]
+        # context window: from i - window_size to i + window_size, excluding i
+        start = max(i - window_size, 0)
+        end = min(i + window_size + 1, len(indices))
+        for j in range(start, end):
+            if j != i:
+                context_word = indices[j]
+                skip_gram_pairs.append((center_word, context_word))
+
+    # Save skip-gram pairs to a text file for readability
+    readable_output_path = os.path.join(data_folder, 'skip_gram_pairs.txt')
+    with open(readable_output_path, 'w') as f:
+        for center, context in skip_gram_pairs:
+            f.write(f'{center},{context}\n')
+
+    # Print skip-gram pairs with words if index_to_word is provided
+    if index_to_word:
+        for center, context in skip_gram_pairs[:20]:  # Display only the first 20 pairs
+            print(f"({center}, {context}) -> ('{index_to_word[center]}', '{index_to_word[context]}')")
+
+    print(f"Skip-gram pairs saved to {readable_output_path}")
+
+###########################################################
+# New Logic: Preparing for Negative Sampling
+###########################################################
+
+def prepare_negative_sampling_distribution(vocabulary, data_folder='data', output_filename='smoothed_distribution.txt'):
+    # Extract words and their frequencies from the vocabulary.
+    # Vocabulary is a dict: {word: frequency}
+    freqs = list(vocabulary.values())
+    total_count = sum(freqs)
+
+    # Compute the unigram distribution U(w) = freq(w)/N
+    unigram_distribution = {word: freq / total_count for word, freq in vocabulary.items()}
+
+    # Compute the smoothed unigram distribution
+    alpha = 0.75  # α = 3/4
+    # Raise each probability to the power of α
+    smoothed_values = [prob ** alpha for prob in unigram_distribution.values()]
+    normalization_factor = sum(smoothed_values)
+    smoothed_unigram_distribution = {
+        word: (unigram_distribution[word] ** alpha) / normalization_factor
+        for word in vocabulary.keys()
+    }
+
+    # Save the smoothed distribution to a file in human-readable format
+    output_path = os.path.join(data_folder, output_filename)
+    with open(output_path, 'w') as f:
+        for word, probability in sorted(smoothed_unigram_distribution.items(), key=lambda item: -item[1]):
+            f.write(f'"{word}": {probability}\n')
+
+    print(f"Smoothed unigram distribution saved to {output_path}")
+    return smoothed_unigram_distribution
+
 if __name__ == '__main__':
     data_folder = 'data'
 
@@ -102,3 +170,10 @@ if __name__ == '__main__':
 
     # Step 4: Convert the text to a sequence of word frequencies
     convert_to_indices(data_folder=data_folder, word_to_index=word_to_index)
+
+    # Step 5 (New): Generate skip-gram training data
+    generate_skip_gram_pairs(data_folder=data_folder, window_size=2, index_to_word=index_to_word)
+
+    # Step 6 (New): Prepare for Negative Sampling
+    smoothed_distribution = prepare_negative_sampling_distribution(vocab, data_folder=data_folder)
+    print("Smoothed unigram distribution prepared.")
