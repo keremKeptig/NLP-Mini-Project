@@ -333,7 +333,7 @@ if __name__ == "__main__":
 
     embedding_dim = 150
     negative_samples = 7
-    batch_size = 128
+    batch_size = 254
     epochs = 5
     lr = 0.001
 
