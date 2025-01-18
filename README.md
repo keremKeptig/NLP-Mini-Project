@@ -26,7 +26,7 @@ To train the Skip-Gram model, run the `main.py` script:
 python main.py
 ```
 
--   Ensure that the `data` folder contains the preprocessed Text8 dataset.
+-   Ensure that the `data` folder contains the `text8.zip` before running `main.py`.
 -   The training script will save the model and vocabulary in the `data` folder by default.
 
 ### Evaluating the Model
@@ -37,7 +37,7 @@ To evaluate the trained embeddings using the WordSim-353 dataset, run the `evalu
 python evaluation.py
 ```
 
--   Make sure the following files are in the `data` folder:
+-   Make sure the following files are in the `data` folder before evaluation:
     -   Trained model file (e.g., `skipgram_model.pth`)
     -   Vocabulary file (e.g., `vocabulary.pkl`)
     -   WordSim-353 dataset file (`combined.csv`)
@@ -45,20 +45,19 @@ python evaluation.py
 The script will:
 
 -   Compute Spearman's rank correlation between the model's similarity scores and human-annotated scores.
--   Visualize the embeddings of selected words using PCA or t-SNE and save the plot into `visualization.png`.
+-   Visualize the embeddings of selected words using PCA and save the plot into `visualization.png`.
 
 ### Visualization
 
 The `evaluation.py` script includes an optional visualization step. It generates a 2D scatter plot of embeddings for the following words:
 
--   **People:** king, queen, prince, princess, aunt, uncle, daughter, son
--   **Places:** paris, france, london, england
--   **Objects/Fruits:** apple, potato, mango, fruit
--   **Animals:** lion, wolf, tiger, elephant
--   **Vehicles:** car, truck, vehicle, bus
--   **Planets:** neptune, saturn, pluto, earth
+-   king, queen, prince, princess, aunt, uncle, daughter, son
+-   paris, france, london, england
+-   apple, potato, mango, fruit
+-   lion, wolf, tiger, elephant
+-   car, truck, vehicle, bus
+-   neptune, saturn, pluto, earth
 
-You can adjust the list of words or the dimensionality reduction method (PCA/t-SNE) in the script.
 
 ----------
 
@@ -69,8 +68,6 @@ You can adjust the list of words or the dimensionality reduction method (PCA/t-S
 ├── data
 │   ├── text8.zip               # Text8 corpus (downloaded separately)
 │   ├── combined.csv            # WordSim-353 dataset
-│   ├── skipgram_model_new.pth  # Trained Skip-Gram model
-│   ├── vocabulary.pkl          # Vocabulary file
 ├── main.py                     # Script for training the Skip-Gram model
 ├── evaluation.py               # Script for evaluation and visualization
 ├── requirements.txt            # Python dependencies
@@ -84,4 +81,3 @@ You can adjust the list of words or the dimensionality reduction method (PCA/t-S
 
 -   For data preprocessing, ensure the Text8 corpus is unzipped and preprocessed as per the instructions in the project.
 -   Modify hyperparameters (e.g., embedding size, batch size, learning rate) directly in `main.py` as needed.
--   For any issues or questions, please open an issue on the repository or contact the project contributors.
