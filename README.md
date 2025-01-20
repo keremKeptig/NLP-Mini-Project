@@ -25,8 +25,7 @@ To train the Skip-Gram model, run the `main.py` script:
 ```bash
 python main.py
 ```
-
--   Ensure that the `data` folder contains the `text8.zip` before running `main.py`.
+-   `text8.py` will be automatically downloaded by running `main.py` script into `data` folder.
 -   The training script will save the model and vocabulary in the `data` folder by default.
 
 ### Evaluating the Model
@@ -66,8 +65,8 @@ The `evaluation.py` script includes an optional visualization step. It generates
 ```
 .
 ├── data
-│   ├── text8.zip               # Text8 corpus (downloaded separately)
-│   ├── combined.csv            # WordSim-353 dataset
+│   ├── text8.zip               # Text8 corpus (downloaded by running main.py script)
+│   ├── combined.csv            # WordSim-353 dataset (already included)
 ├── main.py                     # Script for training the Skip-Gram model
 ├── evaluation.py               # Script for evaluation and visualization
 ├── requirements.txt            # Python dependencies
