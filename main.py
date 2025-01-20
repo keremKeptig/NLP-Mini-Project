@@ -1,8 +1,9 @@
 import os
 import json
 import pickle
-import numpy as np
 import torch
+import requests
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
@@ -10,6 +11,16 @@ from collections import Counter
 import zipfile
 import torch.nn.functional as F
 
+def download_text8(data_folder, url='http://mattmahoney.net/dc/text8.zip', filename='text8.zip'):
+    zip_path = os.path.join(data_folder, filename)
+    if not os.path.exists(zip_path):
+        print('Downloading Text8 dataset...')
+        response = requests.get(url)
+        with open(zip_path, 'wb') as f:
+            f.write(response.content)
+        print('Download completed.')
+    else:
+        print('Text8 dataset already exists.')
 
 def extract_first_n_words(
     data_folder="data",
@@ -313,6 +324,8 @@ class SkipGramModel(nn.Module):
 
 if __name__ == "__main__":
     data_folder = "data"
+    
+    download_text8(data_folder=data_folder)
 
     extract_first_n_words(data_folder=data_folder)
 
