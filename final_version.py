@@ -12,9 +12,9 @@ import collections
 # HYPERPARAMETERS (You can play with these)
 # -----------------------------
 EMBEDDING_DIM = 128    # Size of the word embedding vectors
-HIDDEN_DIM = 256       # Size of the hidden dimension in the LSTM and MLP layers
-BATCH_SIZE = 512       # Number of samples per training batch
-EPOCHS = 3             # Training epochs
+HIDDEN_DIM = 512       # Size of the hidden dimension in the LSTM and MLP layers
+BATCH_SIZE = 32        # Number of samples per training batch
+EPOCHS = 10             # Training epochs
 LEARNING_RATE = 0.001  # Initial learning rate
 
 # Detect GPU (CUDA) or default to CPU
@@ -86,7 +86,6 @@ class DependencyDataset(Dataset):
         heads_tensor = torch.tensor(heads, dtype=torch.long)
         return indexed_tokens_tensor, heads_tensor
 
-
 # ------------------------------------------------------------------
 # COLLATE FUNCTION FOR DATALOADER
 # ------------------------------------------------------------------
@@ -104,8 +103,6 @@ def collate_fn(batch):
 
     return {"input_ids": padded_inputs, "heads": padded_heads}
 
-
-
 # ------------------------------------------------------------------
 # MODEL: BILINEAR PARSER
 # ------------------------------------------------------------------
@@ -119,54 +116,76 @@ class BilinearParser(nn.Module):
       - Two MLP (nn.Linear) layers to produce 'dependent' and 'head' representations for each token.
       - A bilinear function (nn.Bilinear) that scores every possible (dependent, head) pair.
       
-    Input shape: [B, T] word indices
-    Output shape: [B, T, T] arc scores
+    Input shape: [B, T] word indices  
+    Output shape: [B, T, T+1] arc scores (the extra column is for the dummy root)
     """
-    def __init__(self, embedding_dim, hidden_dim, vocab_size):
+    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers=2, dropout=0.0):
         super(BilinearParser, self).__init__()
-        # Embedding layer (using padding index 0 for <PAD>)
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
-        # 2-layer bidirectional LSTM (note: output dim = 2*hidden_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=2, bidirectional=True, batch_first=True)
-        # MLP layers for dependent and head representations.
-        # They map from 2*hidden_dim -> hidden_dim.
+        
+        # Embedding layer
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        
+        # BiLSTM layer (2 layers, bidirectional)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=num_layers, 
+                            batch_first=True, dropout=dropout, bidirectional=True)
+        
+        # MLPs for dependent and head representations.
+        # Since LSTM is bidirectional, its output dimension is 2 * hidden_dim.
         self.dep_mlp = nn.Linear(2 * hidden_dim, hidden_dim)
         self.head_mlp = nn.Linear(2 * hidden_dim, hidden_dim)
-        # Bilinear layer. We set out_features=1 so that for each pair we get a scalar score.
-        # We will later extract its weight to compute scores in a vectorized manner.
-        self.bilinear = nn.Bilinear(hidden_dim, hidden_dim, 1, bias=False)
-
-        # Optionally, you can add a non-linearity after the MLPs.
+        
+        # Activation function
         self.activation = nn.ReLU()
+        
+        # Bilinear layer for scoring.
+        # Note: nn.Bilinear by default produces an output of shape [B, T, 1]
+        #       but we extract the weight for our computations.
+        self.bilinear = nn.Bilinear(hidden_dim, hidden_dim, 1, bias=False)
+        
+        # Define a learnable dummy root parameter.
+        # Its shape is [1, hidden_dim]. This will be expanded for each batch.
+        self.root = nn.Parameter(torch.randn(1, hidden_dim))
 
     def forward(self, x):
         """
         :param x: [B, T] tensor of word indices
-        :return:  [B, T, T] arc scores where score[b, i, j] is how likely
+        :return:  [B, T, T+1] arc scores where score[b, i, j] is how likely
                   it is for token i to have head j in batch b.
+                  The extra column (j = T) corresponds to the dummy root.
         """
         # 1. Get embeddings: [B, T, EMBEDDING_DIM]
         embed = self.embedding(x)
-        # 2. Pass through LSTM: output shape [B, T, 2*HIDDEN_DIM]
+        
+        # 2. Pass through BiLSTM: output shape [B, T, 2*HIDDEN_DIM]
         lstm_out, _ = self.lstm(embed)
+        
         # 3. Compute dependent and head representations using MLPs.
-        dep = self.activation(self.dep_mlp(lstm_out))   # shape [B, T, HIDDEN_DIM]
-        head = self.activation(self.head_mlp(lstm_out))   # shape [B, T, HIDDEN_DIM]
+        dep = self.activation(self.dep_mlp(lstm_out))  # shape: [B, T, HIDDEN_DIM]
+        head = self.activation(self.head_mlp(lstm_out))  # shape: [B, T, HIDDEN_DIM]
 
         # 4. Compute bilinear scores.
-        #    We want to compute for each token i and each token j:
-        #       score[i,j] = dep[i]^T * W * head[j]
-        #    where W is the weight matrix from the bilinear layer.
-        #
-        #    Extract W from nn.Bilinear. It has shape [1, HIDDEN_DIM, HIDDEN_DIM].
+        #    We want: score[b, i, j] = dep[b, i]^T * W * head[b, j]
+        #    Extract W from the nn.Bilinear layer.
         W = self.bilinear.weight.squeeze(0)  # shape: [HIDDEN_DIM, HIDDEN_DIM]
-        # Compute intermediate = dep @ W -> shape: [B, T, HIDDEN_DIM]
+        # Compute intermediate representations: [B, T, HIDDEN_DIM]
         intermediate = torch.matmul(dep, W)
-        # Now, compute scores = intermediate * head^T: [B, T, T]
-        scores = torch.bmm(intermediate, head.transpose(1, 2))
+        
+        # 5. Compute scores for tokens (non-root heads): [B, T, T]
+        token_scores = torch.bmm(intermediate, head.transpose(1, 2))
+        
+        # 6. Compute scores for the dummy root head.
+        #    Expand the dummy root parameter for each example in the batch.
+        B = x.size(0)
+        # Expand self.root: [B, 1, HIDDEN_DIM]
+        dummy_root = self.root.expand(B, -1, -1)
+        # Compute scores with the dummy root: [B, T, 1]
+        root_scores = torch.bmm(intermediate, dummy_root.transpose(1, 2))
+        
+        # 7. Concatenate the token and dummy root scores along the head dimension.
+        #    This results in scores of shape [B, T, T+1]
+        scores = torch.cat([token_scores, root_scores], dim=-1)
+        
         return scores
-
-
 
 # ------------------------------------------------------------------
 # MAIN SCRIPT
@@ -206,7 +225,8 @@ if __name__ == "__main__":
 
     # Initialize Model, Optimizer, Loss
     vocab_size = len(word2idx)
-    model = BilinearParser(EMBEDDING_DIM, HIDDEN_DIM, vocab_size).to(device)
+    # Note: The constructor expects (vocab_size, embedding_dim, hidden_dim, ...)
+    model = BilinearParser(vocab_size, EMBEDDING_DIM, HIDDEN_DIM).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     # We ignore targets that are -1 (the root and padded positions)
     criterion = nn.CrossEntropyLoss(ignore_index=-1)
@@ -225,11 +245,11 @@ if __name__ == "__main__":
             targets = batch["heads"].to(device)       # [B, T]
             
             optimizer.zero_grad()
-            logits = model(inputs)  # [B, T, T] arc scores
+            logits = model(inputs)  # [B, T, T+1] arc scores
             
             # Reshape logits and targets for loss computation.
             B, T, _ = logits.shape
-            logits_flat = logits.view(B * T, T)
+            logits_flat = logits.view(B * T, T + 1)
             targets_flat = targets.view(B * T)
             
             loss = criterion(logits_flat, targets_flat)
@@ -251,10 +271,10 @@ if __name__ == "__main__":
         with torch.no_grad():
             for batch in val_loader:
                 inputs = batch["input_ids"].to(device)  # [B, T]
-                targets = batch["heads"].to(device)       # Correctly access the targets
+                targets = batch["heads"].to(device)
                 logits = model(inputs)
                 B, T, _ = logits.shape
-                logits_flat = logits.view(B * T, T)
+                logits_flat = logits.view(B * T, T + 1)
                 targets_flat = targets.view(B * T)
                 loss = criterion(logits_flat, targets_flat)
                 val_loss += loss.item()
@@ -273,7 +293,7 @@ if __name__ == "__main__":
         for batch in test_loader:
             inputs = batch["input_ids"].to(device)
             targets = batch["heads"].to(device)  # [B, T]
-            logits = model(inputs)  # [B, T, T]
+            logits = model(inputs)  # [B, T, T+1]
             # Get predicted head indices per token.
             preds = torch.argmax(logits, dim=2)  # [B, T]
 
