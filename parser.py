@@ -1,4 +1,4 @@
-import torch 
+import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -11,15 +11,16 @@ import collections
 # -----------------------------
 # HYPERPARAMETERS (You can play with these)
 # -----------------------------
-EMBEDDING_DIM = 128    # Size of the word embedding vectors
-HIDDEN_DIM = 512       # Size of the hidden dimension in the LSTM and MLP layers
-BATCH_SIZE = 32        # Number of samples per training batch
-EPOCHS = 10             # Training epochs
+EMBEDDING_DIM = 128  # Size of the word embedding vectors
+HIDDEN_DIM = 512  # Size of the hidden dimension in the LSTM and MLP layers
+BATCH_SIZE = 32  # Number of samples per training batch
+EPOCHS = 2  # Training epochs
 LEARNING_RATE = 0.001  # Initial learning rate
 
 # Detect GPU (CUDA) or default to CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+
 
 # ------------------------------------------------------------------
 # DATASET CLASS (WORD-LEVEL) + VOCAB BUILDING
@@ -32,6 +33,7 @@ class DependencyDataset(Dataset):
          - head = 0 (root) -> -1 (ignored by CrossEntropyLoss)
          - head = k (1..T) -> (k-1) (0-based index)
     """
+
     def __init__(self, data_file, word2idx=None, build_vocab=False):
         self.sentences = []
         self.heads = []
@@ -61,7 +63,7 @@ class DependencyDataset(Dataset):
                 shifted_heads = []
                 for h in heads_raw:
                     if h == 0:
-                        shifted_heads.append(-1)   # root -> ignore index
+                        shifted_heads.append(-1)  # root -> ignore index
                     else:
                         shifted_heads.append(h - 1)  # 1-based -> 0-based
 
@@ -86,6 +88,7 @@ class DependencyDataset(Dataset):
         heads_tensor = torch.tensor(heads, dtype=torch.long)
         return indexed_tokens_tensor, heads_tensor
 
+
 # ------------------------------------------------------------------
 # COLLATE FUNCTION FOR DATALOADER
 # ------------------------------------------------------------------
@@ -103,45 +106,55 @@ def collate_fn(batch):
 
     return {"input_ids": padded_inputs, "heads": padded_heads}
 
+
 # ------------------------------------------------------------------
 # MODEL: BILINEAR PARSER
 # ------------------------------------------------------------------
 class BilinearParser(nn.Module):
     """
     Implement the bilinear parser.
-    
+
     Requirements:
       - An embedding layer for word indices.
       - A BiLSTM for contextual encoding (2 layers, bidirectional).
       - Two MLP (nn.Linear) layers to produce 'dependent' and 'head' representations for each token.
       - A bilinear function (nn.Bilinear) that scores every possible (dependent, head) pair.
-      
-    Input shape: [B, T] word indices  
+
+    Input shape: [B, T] word indices
     Output shape: [B, T, T+1] arc scores (the extra column is for the dummy root)
     """
-    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers=2, dropout=0.0):
+
+    def __init__(
+        self, vocab_size, embedding_dim, hidden_dim, num_layers=2, dropout=0.0
+    ):
         super(BilinearParser, self).__init__()
-        
+
         # Embedding layer
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        
+
         # BiLSTM layer (2 layers, bidirectional)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=num_layers, 
-                            batch_first=True, dropout=dropout, bidirectional=True)
-        
+        self.lstm = nn.LSTM(
+            embedding_dim,
+            hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True,
+        )
+
         # MLPs for dependent and head representations.
         # Since LSTM is bidirectional, its output dimension is 2 * hidden_dim.
         self.dep_mlp = nn.Linear(2 * hidden_dim, hidden_dim)
         self.head_mlp = nn.Linear(2 * hidden_dim, hidden_dim)
-        
+
         # Activation function
         self.activation = nn.ReLU()
-        
+
         # Bilinear layer for scoring.
         # Note: nn.Bilinear by default produces an output of shape [B, T, 1]
         #       but we extract the weight for our computations.
         self.bilinear = nn.Bilinear(hidden_dim, hidden_dim, 1, bias=False)
-        
+
         # Define a learnable dummy root parameter.
         # Its shape is [1, hidden_dim]. This will be expanded for each batch.
         self.root = nn.Parameter(torch.randn(1, hidden_dim))
@@ -155,10 +168,10 @@ class BilinearParser(nn.Module):
         """
         # 1. Get embeddings: [B, T, EMBEDDING_DIM]
         embed = self.embedding(x)
-        
+
         # 2. Pass through BiLSTM: output shape [B, T, 2*HIDDEN_DIM]
         lstm_out, _ = self.lstm(embed)
-        
+
         # 3. Compute dependent and head representations using MLPs.
         dep = self.activation(self.dep_mlp(lstm_out))  # shape: [B, T, HIDDEN_DIM]
         head = self.activation(self.head_mlp(lstm_out))  # shape: [B, T, HIDDEN_DIM]
@@ -169,10 +182,10 @@ class BilinearParser(nn.Module):
         W = self.bilinear.weight.squeeze(0)  # shape: [HIDDEN_DIM, HIDDEN_DIM]
         # Compute intermediate representations: [B, T, HIDDEN_DIM]
         intermediate = torch.matmul(dep, W)
-        
+
         # 5. Compute scores for tokens (non-root heads): [B, T, T]
         token_scores = torch.bmm(intermediate, head.transpose(1, 2))
-        
+
         # 6. Compute scores for the dummy root head.
         #    Expand the dummy root parameter for each example in the batch.
         B = x.size(0)
@@ -180,19 +193,20 @@ class BilinearParser(nn.Module):
         dummy_root = self.root.expand(B, -1, -1)
         # Compute scores with the dummy root: [B, T, 1]
         root_scores = torch.bmm(intermediate, dummy_root.transpose(1, 2))
-        
+
         # 7. Concatenate the token and dummy root scores along the head dimension.
         #    This results in scores of shape [B, T, T+1]
         scores = torch.cat([token_scores, root_scores], dim=-1)
-        
+
         return scores
+
 
 # ------------------------------------------------------------------
 # MAIN SCRIPT
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     # Path to your UD file (update path if needed):
-    data_file = r"C:\Users\userpc\Desktop\first-semester-JMU\natural-language\mini-project\mini2\en_ewt-ud-train.conllu"
+    data_file = "./en_ewt-ud-train.conllu"
 
     # Build vocabulary
     print("Building vocabulary from dataset...")
@@ -216,12 +230,11 @@ if __name__ == "__main__":
     print(f"Train/Val/Test sizes: {train_size}/{val_size}/{test_size}")
 
     # DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, 
-                              shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, 
-                            collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, 
-                             collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn
+    )
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn)
 
     # Initialize Model, Optimizer, Loss
     vocab_size = len(word2idx)
@@ -235,32 +248,36 @@ if __name__ == "__main__":
     # TRAINING LOOP
     # ---------------------------------------------------------
     print("Starting training...")
-    for epoch in range(1, EPOCHS + 1):
-        model.train()
-        total_loss = 0.0
-        num_batches = 0
+    with tqdm(
+        total=EPOCHS, desc="Training Progress", unit="epoch", disable=False
+    ) as pbar:
+        for epoch in range(1, EPOCHS + 1):
+            model.train()
+            total_loss = 0.0
+            num_batches = 0
 
-        for batch in train_loader:
-            inputs = batch["input_ids"].to(device)  # [B, T]
-            targets = batch["heads"].to(device)       # [B, T]
-            
-            optimizer.zero_grad()
-            logits = model(inputs)  # [B, T, T+1] arc scores
-            
-            # Reshape logits and targets for loss computation.
-            B, T, _ = logits.shape
-            logits_flat = logits.view(B * T, T + 1)
-            targets_flat = targets.view(B * T)
-            
-            loss = criterion(logits_flat, targets_flat)
-            loss.backward()
-            optimizer.step()
-                    
-            total_loss += loss.item()
-            num_batches += 1
+            for batch in train_loader:
+                inputs = batch["input_ids"].to(device)  # [B, T]
+                targets = batch["heads"].to(device)  # [B, T]
 
-        avg_loss = total_loss / num_batches
-        print(f"Epoch {epoch}: Average Training Loss = {avg_loss:.4f}")
+                optimizer.zero_grad()
+                logits = model(inputs)  # [B, T, T+1] arc scores
+
+                # Reshape logits and targets for loss computation.
+                B, T, _ = logits.shape
+                logits_flat = logits.view(B * T, T + 1)
+                targets_flat = targets.view(B * T)
+
+                loss = criterion(logits_flat, targets_flat)
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item()
+                num_batches += 1
+
+            avg_loss = total_loss / num_batches
+            pbar.set_postfix({"Epoch": epoch, "Average Loss": f"{avg_loss:.4f}"})
+            pbar.update(1)
 
         # ---------------------------------------------------------
         # (Optional) Validation Loop
@@ -306,7 +323,7 @@ if __name__ == "__main__":
     print(f"Test Accuracy: {test_acc:.4f}")
 
     # ---------------------------------------------------------
-    # SAMPLE PREDICTIONS 
+    # SAMPLE PREDICTIONS
     # ---------------------------------------------------------
     # Manually inspect a couple of samples from the test dataset.
     idx2word = {v: k for k, v in word2idx.items()}
